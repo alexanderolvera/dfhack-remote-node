@@ -1,0 +1,33 @@
+{
+  "name": "dfhack-remote",
+  "version": "1.0.0",
+  "description": "DFHack protobuf.js bindings",
+  "main": "lib.js",
+  "scripts": {
+    "install": "mkdir build",
+    "postinstall": "pbjs proto/*.proto --es6 -t json -o build/proto.json",
+    "pretest": "browserify main.js -o build/bundle.js",
+    "test": "websockify --web=. 127.0.0.1:8080 127.0.0.1:5000"
+  },
+  "keywords": [
+    "dwarf",
+    "fortress",
+    "dfhack",
+    "remote",
+    "RemoteFortressReader"
+  ],
+  "author": "Alex",
+  "license": "ISC",
+  "dependencies": {
+    "protobufjs": "^6.9.0"
+  },
+  "devDependencies": {
+    "browserify": "^16.5.1",
+    "websockify": "^0.7.1",
+    "ws": "~0.4.27"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexchandel/dfhack-remote.git"
+  }
+}
