@@ -1,5 +1,9 @@
 # Project temp:
 build/*
+# ...but proto.json is the runtime-required bundle (client.js reads it) and there
+# is no build step for consumers, so it's committed. Regenerate with `npm run
+# gen-proto` after editing any proto/*.proto.
+!build/proto.json
 test/*
 
 
