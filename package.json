@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "description": "Node client for the DFHack Remote RPC protocol (protobuf over TCP)",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,7 +39,7 @@
     "remote",
     "RemoteFortressReader"
   ],
-  "author": "Alex",
+  "author": "Alexander Olvera",
   "license": "ISC",
   "dependencies": {
     "protobufjs": "^7.4.0"
@@ -54,6 +57,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/alexchandel/dfhack-remote.git"
+    "url": "git+https://github.com/alexanderolvera/dfhack-remote-node.git"
+  },
+  "homepage": "https://github.com/alexanderolvera/dfhack-remote-node#readme",
+  "bugs": {
+    "url": "https://github.com/alexanderolvera/dfhack-remote-node/issues"
   }
 }

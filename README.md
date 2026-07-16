@@ -16,8 +16,17 @@ Built primarily as the RPC layer for a DFHack MCP server.
 ## Install
 
 ```sh
+npm install dfhack-remote-node
+```
+
+The published package ships prebuilt (`dist/` ESM + type declarations, proto
+bundle inlined), so no build step is needed to consume it.
+
+To work on the library from a clone instead:
+
+```sh
 npm install
-npm run build     # generates build/proto.json and bundles dist/
+npm run build     # regenerates build/proto.json and bundles dist/
 ```
 
 `build/proto.json` (the compiled protobuf bundle) is committed, so the source

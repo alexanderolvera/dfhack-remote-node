@@ -1,6 +1,7 @@
 ISC License
 
-Copyright (c) 2020, Alexander Chandel
+Copyright (c) 2020, Alexander Chandel (original browser client)
+Copyright (c) 2026, Alexander Olvera (TypeScript/Node port)
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above
