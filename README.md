@@ -17,16 +17,19 @@ Built primarily as the RPC layer for the DFHack MCP server.
 
 ```sh
 npm install
-npm run gen-proto   # compile proto/*.proto -> build/proto.json (git-ignored)
 ```
 
-`build/proto.json` is a generated artifact, so re-run `gen-proto` after a fresh
-clone or when the `.proto` files change.
+`build/proto.json` (the compiled protobuf bundle the client loads at runtime) is
+committed, so a fresh clone works immediately. After editing any `proto/*.proto`,
+regenerate it with `npm run gen-proto`.
 
-> ⚠️ The `.proto` files are inherited from the upstream project and predate
-> Steam-era DF. Refresh them from the DFHack repo at the tag matching your
-> installed version. `BindMethod` fails gracefully per method if a signature no
-> longer matches, so drift is detectable at runtime.
+> The `.proto` files are pinned to **DFHack `53.15-r2`** (pulled from
+> [DFHack/dfhack](https://github.com/DFHack/dfhack) at the commit the running
+> build reports via `getGitDescription`). To retarget another version, replace
+> the files from the matching tag and re-run `gen-proto`. Method input/output
+> types in `METHODS` (src/client.js) are fully-qualified names that must match
+> DFHack's registration, or `BindMethod` reports a "wrong signature" at runtime —
+> which makes drift detectable per method.
 
 ## Usage
 
