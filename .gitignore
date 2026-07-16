@@ -16,6 +16,7 @@ ehthumbs_vista.db
 
 
 # IDEs
+.idea/
 .vscode/
 .vscode/*
 !.vscode/settings.json
