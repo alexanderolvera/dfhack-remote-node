@@ -15,24 +15,29 @@ import { DfConnection } from './connection.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROTO_JSON = join(__dirname, '..', 'build', 'proto.json');
 
-// method name -> { plugin, ns, input, output }. plugin=null for core methods.
+// method name -> { plugin, input, output }. plugin=null for core methods.
+// input/output are FULLY-QUALIFIED protobuf type names (with package), because a
+// method's input and output can live in different packages — e.g. RFR methods
+// take a dfproto.EmptyMessage but return a RemoteFortressReader.* message. This
+// is exactly the full name DFHack matches during BindMethod, so a mismatch here
+// surfaces as "Requested wrong signature for RPC method".
 // Ported from FUNC_DEFS in the original lib.js; extend as tools need methods.
 const METHODS = {
-  // core (dfproto namespace)
-  BindMethod:   { plugin: null, ns: 'dfproto', input: 'CoreBindRequest', output: 'CoreBindReply' },
-  RunCommand:   { plugin: null, ns: 'dfproto', input: 'CoreRunCommandRequest', output: 'EmptyMessage' },
-  RunLua:       { plugin: null, ns: 'dfproto', input: 'CoreRunLuaRequest', output: 'StringListMessage' },
-  GetVersion:   { plugin: null, ns: 'dfproto', input: 'EmptyMessage', output: 'StringMessage' },
-  GetDFVersion: { plugin: null, ns: 'dfproto', input: 'EmptyMessage', output: 'StringMessage' },
-  GetWorldInfo: { plugin: null, ns: 'dfproto', input: 'EmptyMessage', output: 'GetWorldInfoOut' },
-  ListUnits:    { plugin: null, ns: 'dfproto', input: 'ListUnitsIn', output: 'ListUnitsOut' },
-  ListSquads:   { plugin: null, ns: 'dfproto', input: 'ListSquadsIn', output: 'ListSquadsOut' },
+  // core (dfproto package)
+  BindMethod:   { plugin: null, input: 'dfproto.CoreBindRequest', output: 'dfproto.CoreBindReply' },
+  RunCommand:   { plugin: null, input: 'dfproto.CoreRunCommandRequest', output: 'dfproto.EmptyMessage' },
+  RunLua:       { plugin: null, input: 'dfproto.CoreRunLuaRequest', output: 'dfproto.StringListMessage' },
+  GetVersion:   { plugin: null, input: 'dfproto.EmptyMessage', output: 'dfproto.StringMessage' },
+  GetDFVersion: { plugin: null, input: 'dfproto.EmptyMessage', output: 'dfproto.StringMessage' },
+  GetWorldInfo: { plugin: null, input: 'dfproto.EmptyMessage', output: 'dfproto.GetWorldInfoOut' },
+  ListUnits:    { plugin: null, input: 'dfproto.ListUnitsIn', output: 'dfproto.ListUnitsOut' },
+  ListSquads:   { plugin: null, input: 'dfproto.ListSquadsIn', output: 'dfproto.ListSquadsOut' },
 
-  // RemoteFortressReader plugin
-  GetMapInfo:   { plugin: 'RemoteFortressReader', ns: 'RemoteFortressReader', input: 'EmptyMessage', output: 'MapInfo' },
-  GetUnitList:  { plugin: 'RemoteFortressReader', ns: 'RemoteFortressReader', input: 'EmptyMessage', output: 'UnitList' },
-  GetViewInfo:  { plugin: 'RemoteFortressReader', ns: 'RemoteFortressReader', input: 'EmptyMessage', output: 'ViewInfo' },
-  GetWorldMapCenter: { plugin: 'RemoteFortressReader', ns: 'RemoteFortressReader', input: 'EmptyMessage', output: 'WorldMap' },
+  // RemoteFortressReader plugin: dfproto.EmptyMessage in, RemoteFortressReader.* out.
+  GetMapInfo:   { plugin: 'RemoteFortressReader', input: 'dfproto.EmptyMessage', output: 'RemoteFortressReader.MapInfo' },
+  GetUnitList:  { plugin: 'RemoteFortressReader', input: 'dfproto.EmptyMessage', output: 'RemoteFortressReader.UnitList' },
+  GetViewInfo:  { plugin: 'RemoteFortressReader', input: 'dfproto.EmptyMessage', output: 'RemoteFortressReader.ViewInfo' },
+  GetWorldMapCenter: { plugin: 'RemoteFortressReader', input: 'dfproto.EmptyMessage', output: 'RemoteFortressReader.WorldMap' },
 };
 
 export class DwarfClient {
@@ -96,8 +101,8 @@ export class DwarfClient {
     const reqBody = BindReq.encode(
       BindReq.create({
         method: name,
-        inputMsg: `${def.ns}.${def.input}`,
-        outputMsg: `${def.ns}.${def.output}`,
+        inputMsg: def.input,
+        outputMsg: def.output,
         plugin: def.plugin ?? undefined,
       })
     ).finish();
@@ -117,8 +122,8 @@ export class DwarfClient {
     const id = await this._bind(name);
     if (id == null) throw new Error(`method ${name} is not available on this DFHack`);
 
-    const InputType = this._root.lookupType(`${def.ns}.${def.input}`);
-    const OutputType = this._root.lookupType(`${def.ns}.${def.output}`);
+    const InputType = this._root.lookupType(def.input);
+    const OutputType = this._root.lookupType(def.output);
     const body = InputType.encode(InputType.create(input)).finish();
 
     const { result, text } = await this._conn.call(id, body);
