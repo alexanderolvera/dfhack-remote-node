@@ -1,0 +1,10 @@
+dist
+build
+node_modules
+package-lock.json
+proto
+
+# Vestigial upstream browser-client files (not part of the Node port)
+index.html
+lib.js
+main.js

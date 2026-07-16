@@ -1,16 +1,33 @@
 {
-  "name": "dfhack-remote",
+  "name": "dfhack-remote-node",
   "version": "2.0.0",
   "description": "Node client for the DFHack Remote RPC protocol (protobuf over TCP)",
   "type": "module",
-  "main": "src/index.js",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "build/proto.json",
+    "proto",
+    "README.md",
+    "LICENSE.md"
+  ],
   "scripts": {
+    "build": "npm run gen-proto && tsup",
     "gen-proto": "pbjs proto/*.proto -t json -o build/proto.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
     "test": "node scripts/mock-server-test.js",
-    "spike": "node scripts/m0-spike.js"
+    "spike": "node scripts/m0-spike.js",
+    "prepare": "npm run build"
   },
   "keywords": [
     "dwarf",
@@ -25,7 +42,15 @@
     "protobufjs": "^7.4.0"
   },
   "devDependencies": {
-    "protobufjs-cli": "^1.1.3"
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.0.0",
+    "protobufjs-cli": "^1.1.3",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0"
   },
   "repository": {
     "type": "git",

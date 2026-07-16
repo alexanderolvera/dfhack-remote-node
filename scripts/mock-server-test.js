@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import protobuf from 'protobufjs';
-import { DwarfClient } from '../src/index.js';
+import { DwarfClient } from '../src/index.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = protobuf.Root.fromJSON(
@@ -16,7 +16,9 @@ const root = protobuf.Root.fromJSON(
 
 const REQUEST_MAGIC = Buffer.from([68, 70, 72, 97, 99, 107, 63, 10, 1, 0, 0, 0]);
 const RESPONSE_MAGIC = Buffer.from([68, 70, 72, 97, 99, 107, 33, 10, 1, 0, 0, 0]);
-const RESULT = -1, FAIL = -2, TEXT = -3;
+const RESULT = -1,
+  FAIL = -2,
+  TEXT = -3;
 
 function frame(id, body) {
   const buf = Buffer.allocUnsafe(8 + body.length);
@@ -113,7 +115,7 @@ async function main() {
 
   try {
     await df.connect();
-    check('handshake', df._conn.connected, df._conn.connected);
+    check('handshake', df.connected, df.connected);
 
     const v = await df.getVersion();
     check('GetVersion decodes StringMessage', v === '50.11-r1-mock', v);

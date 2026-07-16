@@ -8,7 +8,7 @@
 // Requires Dwarf Fortress running with DFHack and a fort loaded.
 // Run: npm run spike
 
-import { DwarfClient } from '../src/index.js';
+import { DwarfClient } from '../src/index.ts';
 
 // Robustly fetch the current fortress site name, or 'unknown'.
 // dfhack.translation.translateName is the current API (was dfhack.TranslateName

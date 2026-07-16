@@ -1,5 +1,5 @@
 // Confirm stress-category direction: category vs raw stress value.
-import { DwarfClient } from '../src/index.js';
+import { DwarfClient } from '../src/index.ts';
 const df = new DwarfClient();
 await df.connect();
 const snip =
@@ -13,5 +13,10 @@ for (const line of out.trim().split('\n')) {
   if (!seen[c]) seen[c] = line;
 }
 console.log('one sample per category (cat stress=value):');
-console.log(Object.keys(seen).sort().map((k) => '  ' + seen[k]).join('\n'));
+console.log(
+  Object.keys(seen)
+    .sort()
+    .map((k) => '  ' + seen[k])
+    .join('\n')
+);
 df.close();
