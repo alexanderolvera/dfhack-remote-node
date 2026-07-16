@@ -71,6 +71,11 @@ export class DwarfClient {
     }
   }
 
+  /** True once connected and past the handshake. */
+  get connected() {
+    return this._conn.connected;
+  }
+
   async connect() {
     await this._conn.connect();
     return this;

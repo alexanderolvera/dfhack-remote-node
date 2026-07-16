@@ -1,24 +1,17 @@
-// Find the correct name-translation API + fort name in this DFHack version.
+// Confirm stress-category direction: category vs raw stress value.
 import { DwarfClient } from '../src/index.js';
-
-const probes = [
-  ['translation module exists', 'print(type(dfhack.translation))'],
-  ['translateName fn', 'print(type(dfhack.translation and dfhack.translation.translateName))'],
-  ['old TranslateName', 'print(type(dfhack.TranslateName))'],
-  ['active_site name via translation',
-    'local s=df.global.world.world_data.active_site[0] print(dfhack.translation.translateName(s.name, true))'],
-  ['fortress entity name',
-    'local e=df.global.plotinfo.main.fortress_entity print(e and dfhack.translation.translateName(e.name, true) or "no entity")'],
-];
-
 const df = new DwarfClient();
 await df.connect();
-for (const [label, snippet] of probes) {
-  try {
-    const out = await df.runCommand('lua', [snippet]);
-    console.log(`OK   ${label}: ${JSON.stringify(out.trim())}`);
-  } catch (err) {
-    console.log(`FAIL ${label}: ${err.message.split('\n')[0]}`);
-  }
+const snip =
+  'for _,u in ipairs(dfhack.units.getCitizens(true)) do ' +
+  'local s=u.status.current_soul and u.status.current_soul.personality.stress or 0 ' +
+  'print(dfhack.units.getStressCategory(u).." stress="..s) end';
+const out = await df.runLuaSnippet(snip);
+const seen = {};
+for (const line of out.trim().split('\n')) {
+  const c = line[0];
+  if (!seen[c]) seen[c] = line;
 }
+console.log('one sample per category (cat stress=value):');
+console.log(Object.keys(seen).sort().map((k) => '  ' + seen[k]).join('\n'));
 df.close();
