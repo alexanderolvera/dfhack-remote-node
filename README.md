@@ -1,130 +1,74 @@
-# dfhack-remote
+# dfhack-remote (Node)
 
-This project provides browser-side JavaScript bindings to Dwarf Fortress, using
-[RemoteFortressReader](https://github.com/DFHack/dfhack/tree/master/plugins/remotefortressreader)
-("RFR"), the [protobuf](https://developers.google.com/protocol-buffers)-based
-remote access interface to [DFHack](https://github.com/DFHack/dfhack).
-With this API, you can talk to Dwarf Fortress from your browser,
-your phone, your TV, your car display… any browser that
-[supports WebSockets](https://caniuse.com/#feat=websockets) (all of them, even IE).
+A Node client for the [DFHack](https://github.com/DFHack/dfhack) Remote RPC
+protocol — protobuf over raw TCP (`localhost:5000`). It lets a Node process read
+from (and, later, act on) a live Dwarf Fortress fort without compiling against
+DFHack's C++.
 
-It may also demo a browser-based fortress viewer someday.
+This is a Node port of the original browser client
+([alexchandel/dfhack-remote](https://github.com/alexchandel/dfhack-remote), ISC).
+The protocol codec is carried over; the transport was rewritten from
+WebSocket + `websockify` to Node `net.Socket`, `RunCommand` console output is now
+captured instead of discarded, and methods bind lazily on first use.
 
-## How it works
-
-You run `websockify`, and then open an HTML page that uses `dfhack-remote`.  The page connects to DFHack through the `websockify` proxy, and loads your fortress.
-
-`websockify` is just a passthrough, and `dfhack-remote` is just a thin wrapper around DFHack.
-Your webpage has full, direct access to DFHack.
-It could make [Armok Vision](https://github.com/RosaryMala/armok-vision) in the browser
-with [threejs](https://threejs.org/)/[voxeljs-next](https://github.com/joshmarinacci/voxeljs-next/).
+Built primarily as the RPC layer for the DFHack MCP server.
 
 ## Setup
 
-### Prerequisites
+```sh
+npm install
+npm run gen-proto   # compile proto/*.proto -> build/proto.json (git-ignored)
+```
 
-* [Node.js](https://nodejs.org/en/), for protobuf libraries and websockify
+`build/proto.json` is a generated artifact, so re-run `gen-proto` after a fresh
+clone or when the `.proto` files change.
 
-These are available on most package managers.  For example,
+> ⚠️ The `.proto` files are inherited from the upstream project and predate
+> Steam-era DF. Refresh them from the DFHack repo at the tag matching your
+> installed version. `BindMethod` fails gracefully per method if a signature no
+> longer matches, so drift is detectable at runtime.
+
+## Usage
+
+```js
+import { DwarfClient } from 'dfhack-remote';
+
+const df = new DwarfClient();          // defaults to 127.0.0.1:5000
+await df.connect();                    // handshake
+
+console.log(await df.getVersion());    // DFHack version string
+const world = await df.getWorldInfo(); // decoded GetWorldInfoOut
+console.log(world.worldName?.englishName);
+
+// Arbitrary Lua snippet; returns whatever it prints (captured console output):
+const text = await df.runLuaSnippet('print(#df.global.world.units.active)');
+
+// Any bound method by name:
+const map = await df.call('GetMapInfo');
+
+df.close();
+```
+
+Every reply object also carries `_text` — the concatenated console output from
+any TEXT frames the call produced.
+
+## Tests
 
 ```sh
-brew install node
+npm test        # offline: mock server speaks the real wire format, no game needed
+npm run spike   # live: connect to a running fort, print version + world + fort name
 ```
 
-```sh
-choco install -y nodejs
-```
+`npm test` validates handshake, framing, lazy binding, protobuf round-trip, and
+TEXT-frame capture against an in-process mock. `npm run spike` (M0) requires
+Dwarf Fortress running with DFHack and a fort loaded.
 
-### Compile Browser Bindings
+## Protocol notes
 
-Setup your development environment:
-
-* Install node dependencies with `npm install`.
-  * Note: this also compiles RFR's protobufs (from `proto/`) into `build/`.
-
-Run the example:
-
-* Compile the JavaScript example to `build/bundle.js` and launch the `websockify` server with `npm test`
-
-### Running the Example
-
-Run Dwarf Fortress with DFHack and load a fort.
-Then run the example with `npm test`.
-Now you can open `index.html`.  Try this in your browser's Inspector:
-
-```js
-df = new DwarfClient()
-x = await df.GetMapInfo()
-```
-
-Pass arguments to RFR methods with a dictionary:
-
-```js
-x = await df.GetUnitListInside({ minX: 1, minY: 1, minZ: 50, maxX: 9, maxY: 9, maxZ: 56 })
-x = await df.GetBlockList({minX: 1, minY: 1, minZ: 50, maxX: 9, maxY: 9, maxZ: 56})
-```
-
-## Documentation
-
-The API defines one class, `DwarfClient`:
-
-```js
-/**
- * @struct
- */
-class DwarfClient {
-    /**
-     * Upon construction, immediately tries to connect to DFHack.
-     * @param {?(number|string)} host An optional numeric port, or string like "127.0.0.1:8080"
-     */
-    constructor (host = null) {
-        ...
-    }
-    ...
-}
-```
-
-It has one `async` method for every RFR method.  Pass arguments to RFR methods with a dictionary:
-
-```js
-df = new DwarfClient()
-await df.GetMapInfo()
-await df.GetUnitListInside({ minX: 1, minY: 1, minZ: 50, maxX: 9, maxY: 9, maxZ: 56 })
-await df.GetBlockList({ minX: 1, minY: 1, minZ: 50, maxX: 9, maxY: 9, maxZ: 56 })
-```
-
-The RFR methods are (sort of) listed in `FUNC_DEFS` in `main.js`.  The RFR
-types are defined in the protobuf files in `proto/`.
-
-note: if necessary, parameter names must be converted to camel-case (e.g: ```list_start```->```listStart```)
-
-### Running a Websockify Wrapper
-
-As browsers can only talk to WebSocket ports, not RFR's raw TCP ports,
-you must run a [websockify](https://github.com/novnc/websockify-js) gateway
-to forward browser requests to RFR.
-
-RFR listens on `127.0.0.1` on TCP port `5000` by default.
-To wrap that with WebSockets on TCP port `8080`, run:
-
-```sh
-npx websockify --web=. 127.0.0.1:8080 127.0.0.1:5000
-```
-
-`npm test` automatically runs this.
-
-Now you can run Dwarf Fortress with DFHack and access data from http://127.0.0.1:8080.
-
-## Issues
-
-RemoteFortressReader has a strange bug where it "remembers" what it returned to
-`GetBlockList`, and never returns a block again unless it changes.  That's a
-buggy way to implement "change-driven notifications" and should be fixed there.
-For now, remember `GetBlockList` only returns changes since the last call!
-
-### TODO
-
-* Make the client an actual JavaScript module.  Right now, it's stuffed into `window.DwarfClient`.
-* Optionally print the CoreTextNotification responses somewhere.  Right now, they're just thrown away.
-* Embed dfhack as a subrepository, and dynamically find protobuf's.  Right now, they're just copied.
-* Optimize, like `java -jar closure-compiler-v20200517.jar -O ADVANCED --js_output_file build/bundle.min.js --js build/bundle.js`
+- Handshake: client sends `DFHack?\n` + `i32(1)`, server replies `DFHack!\n` + `i32(1)`.
+- Message header: `id:i16, pad:u16, size:i32` (little-endian), then `size` body bytes.
+- A call's reply is zero or more `TEXT` frames (console output) followed by one
+  `RESULT` frame (reply protobuf) or one `FAIL` frame (errno in the size field).
+- Calls are serialized — DFHack handles one at a time per socket.
+- `GetBlockList` only returns blocks *changed since the last call* — don't build a
+  full-map snapshot on it naively (use `ResetMapHashes` to force a resend).
