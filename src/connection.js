@@ -24,10 +24,11 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5000;
 
 export class RpcError extends Error {
-  constructor(message, code) {
+  constructor(message, code, text = '') {
     super(message);
     this.name = 'RpcError';
     this.code = code;
+    this.text = text; // console (TEXT) output the call produced before failing
   }
 }
 
@@ -114,7 +115,14 @@ export class DfConnection {
     }
 
     if (frame.id === RPC_REPLY.FAIL) {
-      call.reject(new RpcError(`RPC call failed (${frame.size})`, frame.size));
+      const detail = text.trim();
+      call.reject(
+        new RpcError(
+          `RPC call failed (${frame.size})${detail ? `: ${detail}` : ''}`,
+          frame.size,
+          text
+        )
+      );
     } else if (frame.id === RPC_REPLY.RESULT) {
       call.resolve({ result: frame.body, text });
     } else {

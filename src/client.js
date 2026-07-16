@@ -143,11 +143,14 @@ export class DwarfClient {
   }
   /**
    * Run an arbitrary Lua snippet and return whatever it prints.
-   * Uses `lua -e <snippet>`; the console output is captured via TEXT frames.
-   * This is the workhorse for semantic tools (snippet builds JSON, prints it).
+   * The DFHack `lua` command joins its arguments and runs them as a chunk (the
+   * console-only `-e` flag is NOT accepted over RPC — it gets parsed as code),
+   * so the snippet is passed as the argument directly. Console output is
+   * captured via TEXT frames. This is the workhorse for semantic tools:
+   * the snippet builds JSON and prints it.
    */
   async runLuaSnippet(snippet) {
-    return this.runCommand('lua', ['-e', snippet]);
+    return this.runCommand('lua', [snippet]);
   }
   /**
    * Invoke a named Lua function via the core RunLua RPC:

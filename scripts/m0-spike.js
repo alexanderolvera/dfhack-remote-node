@@ -11,13 +11,12 @@
 import { DwarfClient } from '../src/index.js';
 
 // Robustly fetch the current fortress site name, or 'unknown'.
-const FORT_NAME_LUA = `
-local ok, name = pcall(function()
-  local site = df.global.world.world_data.active_site[0]
-  return dfhack.TranslateName(site.name, true)
-end)
-print(ok and name or 'unknown')
-`;
+// dfhack.translation.translateName is the current API (was dfhack.TranslateName
+// in older DFHack); passed as one chunk because `lua -e` isn't accepted over RPC.
+const FORT_NAME_LUA =
+  'local ok, name = pcall(function() ' +
+  'return dfhack.translation.translateName(df.global.world.world_data.active_site[0].name, true) ' +
+  'end) print(ok and name or "unknown")';
 
 async function main() {
   const df = new DwarfClient();
