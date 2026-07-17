@@ -61,9 +61,12 @@ jobs:
         run: |
           set -euo pipefail
           # Exact-title match across open + closed issues (issues are the state).
-          found=$(gh issue list --state all --limit 200 --json title \
-            --jq "[.[].title] | index(\"Update for DFHack $TAG\")")
-          if [ "$found" != "null" ]; then
+          # Count with `length` so the result is always an integer — `index`
+          # returns null on no match, which gh's --jq prints as an empty string,
+          # not the literal "null".
+          count=$(gh issue list --state all --limit 200 --json title \
+            --jq "[.[] | select(.title == \"Update for DFHack $TAG\")] | length")
+          if [ "${count:-0}" -gt 0 ]; then
             echo "exists=true" >>"$GITHUB_OUTPUT"
             echo "Issue already exists for $TAG — nothing to do."
           else
