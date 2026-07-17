@@ -1,0 +1,169 @@
+name: DFHack release watch
+
+# Polls DFHack/dfhack once a day. When a new *stable* release appears that has
+# no tracking issue yet, files one scoped to re-syncing the vendored `.proto`
+# files, then — if COPILOT_ASSIGN_TOKEN is set — assigns the GitHub Copilot
+# coding agent so it opens a PR. Existing issues are the dedup state, so the
+# job is safe to re-run and needs no external storage.
+#
+# ── One-time setup to enable auto-assign ──────────────────────────────────
+# 1. Enable the Copilot coding agent for this repo (Settings → Copilot).
+#    Requires a Copilot plan that includes the coding agent.
+# 2. Create a fine-grained PAT owned by a user who HAS a coding-agent seat,
+#    scoped to this repo with Issues: Read and write. Save it as the repo
+#    secret COPILOT_ASSIGN_TOKEN.
+#    (The built-in GITHUB_TOKEN cannot assign Copilot: github-actions[bot]
+#    has no coding-agent seat, and GitHub blocks the agent from acting on
+#    assignments made by the automatic token.)
+# Until that secret exists the issue is still filed — you just click
+# "assign to Copilot" yourself once per release.
+
+on:
+  schedule:
+    - cron: "17 14 * * *"   # daily at 14:17 UTC
+  workflow_dispatch:          # manual run, for testing
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dfhack-release-watch
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Find latest stable DFHack release
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/DFHack/dfhack/releases?per_page=30" \
+            --jq 'map(select(.prerelease == false and .draft == false)) | .[0]')
+          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+            echo "::warning::No stable DFHack release found in the latest 30." && exit 0
+          fi
+          jq -r '.tag_name'        <<<"$latest" | { read t; echo "tag=$t"   >>"$GITHUB_OUTPUT"; }
+          jq -r '.html_url'        <<<"$latest" | { read u; echo "url=$u"   >>"$GITHUB_OUTPUT"; }
+          jq -r '.name // .tag_name' <<<"$latest" | { read n; echo "name=$n" >>"$GITHUB_OUTPUT"; }
+          jq -r '.body // ""'      <<<"$latest" > release_body.md
+          echo "Latest stable DFHack release: $(jq -r '.tag_name' <<<"$latest")"
+
+      - name: Check for an existing tracking issue
+        id: dedup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Exact-title match across open + closed issues (issues are the state).
+          found=$(gh issue list --state all --limit 200 --json title \
+            --jq "[.[].title] | index(\"Update for DFHack $TAG\")")
+          if [ "$found" != "null" ]; then
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+            echo "Issue already exists for $TAG — nothing to do."
+          else
+            echo "exists=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tracking issue
+        id: issue
+        if: steps.dedup.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+          URL: ${{ steps.rel.outputs.url }}
+          NAME: ${{ steps.rel.outputs.name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "DFHack **$NAME** was released: $URL"
+            echo
+            echo "This repo vendors DFHack's \`.proto\` files under \`proto/\` and"
+            echo "generates \`build/proto.json\` from them (\`npm run gen-proto\`). A new"
+            echo "DFHack release can change the RPC wire protocol, so the vendored"
+            echo "copies may be stale."
+            echo
+            echo "### Task"
+            echo "- [ ] Re-sync \`proto/*.proto\` from DFHack \`$TAG\` (upstream \`library/proto/\`)"
+            echo "- [ ] \`npm run build\` (runs \`gen-proto\` + \`tsup\`) succeeds"
+            echo "- [ ] \`npm run typecheck\` and \`npm run lint\` pass"
+            echo "- [ ] \`npm test\` (offline mock-server protocol test) passes"
+            echo "- [ ] Summarise any proto / wire-format changes in the PR description"
+            echo
+            echo "If no \`.proto\` files changed upstream for \`$TAG\`, close this as a"
+            echo "no-op with a note."
+            echo
+            echo "<details><summary>Upstream release notes</summary>"
+            echo
+            # Neutralize @mentions (zero-width space) so filing the issue can't ping people.
+            perl -pe 's/@/@\x{200b}/g' release_body.md
+            echo
+            echo "</details>"
+          } > issue_body.md
+
+          # Best-effort label; ignore if labels are restricted.
+          gh label create dfhack-release --color 1d76db \
+            --description "Automated tracking issue for a new DFHack release" --force >/dev/null 2>&1 || true
+
+          url=$(gh issue create \
+            --title "Update for DFHack $TAG" \
+            --body-file issue_body.md \
+            --label dfhack-release 2>/dev/null) \
+          || url=$(gh issue create \
+            --title "Update for DFHack $TAG" \
+            --body-file issue_body.md)
+          num="${url##*/}"
+          echo "number=$num" >>"$GITHUB_OUTPUT"
+          echo "Created issue #$num: $url"
+
+      - name: Assign the Copilot coding agent
+        if: steps.issue.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          ISSUE: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::COPILOT_ASSIGN_TOKEN not set — skipping auto-assign."
+            echo "Assign Copilot manually on issue #$ISSUE, or add the secret to automate it."
+            exit 0
+          fi
+
+          # 1. Find the Copilot coding-agent bot among assignable actors.
+          bot_id=$(gh api graphql -f query='
+            query($owner:String!,$name:String!){
+              repository(owner:$owner,name:$name){
+                suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:100){
+                  nodes { login __typename ... on Bot { id } }
+                }
+              }
+            }' -f owner="$OWNER" -f name="$REPO" \
+            --jq '.data.repository.suggestedActors.nodes[]
+                  | select(.login=="copilot-swe-agent") | .id')
+          if [ -z "$bot_id" ]; then
+            echo "::warning::Copilot coding agent not assignable here (not enabled, or the token's user has no seat). Assign manually on #$ISSUE."
+            exit 0
+          fi
+
+          # 2. Resolve the issue's node id.
+          issue_id=$(gh api graphql -f query='
+            query($owner:String!,$name:String!,$num:Int!){
+              repository(owner:$owner,name:$name){ issue(number:$num){ id } }
+            }' -f owner="$OWNER" -f name="$REPO" -F num="$ISSUE" \
+            --jq '.data.repository.issue.id')
+
+          # 3. Assign the agent — it will pick up the issue and open a PR.
+          gh api graphql -f query='
+            mutation($assignable:ID!,$actor:ID!){
+              replaceActorsForAssignable(input:{assignableId:$assignable, actorIds:[$actor]}){
+                assignable { ... on Issue { number } }
+              }
+            }' -f assignable="$issue_id" -f actor="$bot_id" >/dev/null
+          echo "Assigned the Copilot coding agent to #$ISSUE"
