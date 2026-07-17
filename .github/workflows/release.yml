@@ -40,6 +40,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -88,6 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-production          # ← approval gate + trusted-publisher scope
     permissions:
+      actions: read                     # download the promoted artifact
       contents: write                    # create the GitHub Release
       id-token: write                    # OIDC for npm Trusted Publishing + provenance
     steps:
@@ -99,7 +102,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Use an npm new enough for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.5.2
 
       - uses: actions/download-artifact@v4
         with:
@@ -109,7 +112,13 @@ jobs:
       - name: Publish to npm (Trusted Publishing / provenance)
         run: |
           set -euo pipefail
-          tgz=$(ls release-artifact/*.tgz)
+          shopt -s nullglob
+          tgz_files=(release-artifact/*.tgz)
+          if [ "${#tgz_files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 tarball in release-artifact, found ${#tgz_files[@]}."
+            exit 1
+          fi
+          tgz="${tgz_files[0]}"
           echo "Publishing $tgz"
           npm publish "$tgz" --provenance --access public
 
@@ -120,6 +129,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           version="${TAG#v}"
           # Extract this version's section body from CHANGELOG.md, if present.
           # Regex-free (literal substring match) so it behaves the same on any
@@ -131,7 +141,12 @@ jobs:
             flag && substr($0, 1, 1) == "["    { exit }
             flag { print }
           ' CHANGELOG.md)
-          tgz=$(ls release-artifact/*.tgz)
+          tgz_files=(release-artifact/*.tgz)
+          if [ "${#tgz_files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 tarball in release-artifact, found ${#tgz_files[@]}."
+            exit 1
+          fi
+          tgz="${tgz_files[0]}"
           if [ -n "${notes//[[:space:]]/}" ]; then
             printf '%s\n' "$notes" > notes.md
             gh release create "$TAG" "$tgz" --title "$TAG" --notes-file notes.md --verify-tag
