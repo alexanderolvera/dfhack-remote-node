@@ -1,0 +1,141 @@
+name: Release
+
+# Cut a release by pushing a version tag:
+#
+#   npm version <patch|minor|major>   # bumps package.json, commits, tags vX.Y.Z
+#   git push --follow-tags
+#
+# The tag push runs this workflow: build + verify, then a GATED publish to npm
+# via Trusted Publishing (OIDC, with provenance) and a matching GitHub Release.
+# The tarball is built once in `verify` and promoted to `publish` — no rebuild.
+#
+# ── One-time setup (both are required before the first tag) ────────────────
+# 1. Approval gate — repo Settings → Environments → New environment
+#    "npm-production" → enable "Required reviewers" and add yourself. The
+#    publish job then waits for your click in the Actions UI before it runs.
+#    (This is the analogue of an Azure DevOps release approval gate.)
+#
+# 2. npm Trusted Publishing (no stored token) — on npmjs.com open the
+#    dfhack-remote-node package → Settings → Trusted Publishing → add a
+#    GitHub Actions publisher:
+#      Repository:   alexanderolvera/dfhack-remote-node
+#      Workflow:     release.yml
+#      Environment:  npm-production
+#    npm then accepts this workflow's OIDC identity instead of an NPM_TOKEN,
+#    and stamps each published version with a provenance attestation.
+#    (Provenance requires this to stay a PUBLIC repo — it is.)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Tag must match package.json version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          echo "tag=$tag  package.json=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag v$tag does not match package.json version $pkg. Bump with 'npm version' so the two agree."
+            exit 1
+          fi
+
+      - name: Refuse to republish an existing version
+        run: |
+          set -euo pipefail
+          pkg=$(node -p "require('./package.json').version")
+          if npm view "dfhack-remote-node@$pkg" version >/dev/null 2>&1; then
+            echo "::error::dfhack-remote-node@$pkg is already on npm — nothing to publish."
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      - name: Pack the tarball that will be published
+        run: npm pack --pack-destination ./release-artifact
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: release-artifact/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm-production          # ← approval gate + trusted-publisher scope
+    permissions:
+      contents: write                    # create the GitHub Release
+      id-token: write                    # OIDC for npm Trusted Publishing + provenance
+    steps:
+      - uses: actions/checkout@v4         # for CHANGELOG extraction and gh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use an npm new enough for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: release-artifact
+
+      - name: Publish to npm (Trusted Publishing / provenance)
+        run: |
+          set -euo pipefail
+          tgz=$(ls release-artifact/*.tgz)
+          echo "Publishing $tgz"
+          npm publish "$tgz" --provenance --access public
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Extract this version's section body from CHANGELOG.md, if present.
+          # Regex-free (literal substring match) so it behaves the same on any
+          # awk flavor; stops at the next "## [" header or the trailing
+          # "[link]: url" reference block.
+          notes=$(awk -v hdr="## [$version]" '
+            substr($0, 1, length(hdr)) == hdr { flag = 1; next }
+            flag && substr($0, 1, 4) == "## [" { exit }
+            flag && substr($0, 1, 1) == "["    { exit }
+            flag { print }
+          ' CHANGELOG.md)
+          tgz=$(ls release-artifact/*.tgz)
+          if [ -n "${notes//[[:space:]]/}" ]; then
+            printf '%s\n' "$notes" > notes.md
+            gh release create "$TAG" "$tgz" --title "$TAG" --notes-file notes.md --verify-tag
+          else
+            # No changelog section for this version — let GitHub autogenerate notes.
+            gh release create "$TAG" "$tgz" --title "$TAG" --generate-notes --verify-tag
+          fi
