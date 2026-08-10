@@ -84,7 +84,11 @@ export class DfConnection {
         this.fail(err);
         reject(err);
       });
-      sock.on('close', () => this.fail(new Error('connection closed')));
+      sock.on('close', () => {
+        if (this.sock) {
+          this.fail(new Error('connection closed'));
+        }
+      });
     });
     return this.ready;
   }
@@ -165,10 +169,18 @@ export class DfConnection {
   }
 
   private fail(err: Error): void {
+    if (this.sock) {
+      this.sock.destroy(err);
+      this.sock = null;
+    }
+    this.shookHands = false;
+    this.ready = null;
     const pending = this.active ? [this.active, ...this.queue] : [...this.queue];
     this.active = null;
     this.queue = [];
     for (const call of pending) call.reject(err);
+    this.buf = Buffer.alloc(0);
+    this.textFrames = [];
   }
 
   close(): void {
@@ -178,5 +190,7 @@ export class DfConnection {
     }
     this.shookHands = false;
     this.ready = null;
+    this.buf = Buffer.alloc(0);
+    this.textFrames = [];
   }
 }
