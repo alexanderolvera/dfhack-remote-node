@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `DwarfClient` no longer reuses method ids bound on a dead connection. DFHack's
+  `RemoteServer` builds its RPC function table per connection, so the id
+  `BindMethod` assigns is only valid on the socket it was bound on. The cache is
+  now keyed on a connection generation that `DfConnection` bumps on every
+  teardown, so after a socket death or an explicit `close()` the next call
+  re-binds instead of addressing a stale id on the new connection.
+
+  Measured against DFHack 53.17-r1: plugin methods (RemoteFortressReader and
+  friends) were the ones that broke, failing with `RPC call of invalid id N`
+  once reused on a new connection. Core method ids are served from a static
+  table and answer even unbound, which is why core-only callers never saw this.
+
+### Added
+
+- `npm run test:live` (`scripts/live-rebind-test.js`): a live interop harness
+  that proxies `DwarfClient` through a recording TCP proxy to a running DFHack,
+  so the method ids on the wire — and the re-bind after a socket death — can be
+  checked against the real server. Not part of `npm test`; it needs DF running
+  with a loaded fort.
+
 ## [2.0.1] - 2026-08-09
 
 ### Fixed

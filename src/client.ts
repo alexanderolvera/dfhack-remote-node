@@ -41,6 +41,11 @@ export class DwarfClient {
   private readonly conn: DfConnection;
   private readonly textNotification: protobuf.Type;
   private readonly boundIds = new Map<MethodName, number | null>();
+  /**
+   * The `conn.generation` the ids in `boundIds` were bound against. Starts
+   * before the first generation so the very first bind() syncs.
+   */
+  private boundGeneration = -1;
 
   constructor({ host, port }: DwarfClientOptions = {}) {
     this.root = loadRoot();
@@ -74,11 +79,34 @@ export class DwarfClient {
     this.conn.close();
   }
 
+  /**
+   * Drop cached method ids bound against an earlier connection.
+   *
+   * DFHack's RemoteServer builds its RPC function table per connection, so an
+   * `assignedId` is only valid on the socket it was bound on — the next
+   * connection starts with an empty table and may well hand out different ids.
+   * Reusing a stale id silently addresses the wrong method (or none at all), so
+   * the whole cache is dropped whenever the connection generation moves: after
+   * a socket death (`fail()`) and after an explicit `close()` alike.
+   *
+   * A cached miss (`null`: the method is not available on this DFHack) is
+   * dropped too, since the replacement connection may be a different DFHack
+   * build or have different plugins loaded.
+   */
+  private syncBindings(): void {
+    const gen = this.conn.generation;
+    if (this.boundGeneration === gen) return;
+    this.boundIds.clear();
+    this.boundGeneration = gen;
+  }
+
   /** Resolve (and cache) a method's runtime id via BindMethod. */
   private async bind(name: MethodName): Promise<number | null> {
+    this.syncBindings();
     const cached = this.boundIds.get(name);
     if (cached !== undefined) return cached;
     const def = METHODS[name];
+    const generation = this.conn.generation;
 
     const BindReq = this.root.lookupType('dfproto.CoreBindRequest');
     const BindReply = this.root.lookupType('dfproto.CoreBindReply');
@@ -95,7 +123,10 @@ export class DwarfClient {
     const { result } = await this.conn.call(0, reqBody);
     const reply = BindReply.toObject(BindReply.decode(result)) as { assignedId?: number };
     const id = reply.assignedId ?? null;
-    this.boundIds.set(name, id);
+    // Only cache if the connection this id was bound on is still the live one:
+    // a teardown racing the reply would otherwise seed the cache with an id
+    // that is already dead.
+    if (this.conn.generation === generation) this.boundIds.set(name, id);
     return id;
   }
 
