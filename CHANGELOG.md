@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `DwarfClient` no longer reuses method ids bound on a dead connection. DFHack's
+  `RemoteServer` builds its RPC function table per connection, so the id
+  `BindMethod` assigns is only valid on the socket it was bound on. The cache is
+  now keyed on a connection generation that `DfConnection` bumps on every
+  teardown, so after a socket death or an explicit `close()` the next call
+  re-binds instead of addressing a stale id on the new connection.
+
 ## [2.0.1] - 2026-08-09
 
 ### Fixed

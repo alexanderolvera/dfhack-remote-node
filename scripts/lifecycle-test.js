@@ -13,7 +13,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { setTimeout as setTimer, clearTimeout } from 'node:timers';
 import { DfConnection } from '../src/connection.ts';
 import { DwarfClient } from '../src/client.ts';
-import { HANDSHAKE_LEN, REQUEST_MAGIC, RESPONSE_MAGIC } from '../src/codec.ts';
+import { HANDSHAKE_LEN, REQUEST_MAGIC, RESPONSE_MAGIC, RPC_REPLY } from '../src/codec.ts';
+import { loadRoot } from '../src/proto.ts';
 
 const COMPLETE_RESPONSE_MAGIC = Buffer.alloc(HANDSHAKE_LEN);
 RESPONSE_MAGIC.copy(COMPLETE_RESPONSE_MAGIC);
@@ -105,6 +106,87 @@ async function connectedPair() {
   sock.emit('data', COMPLETE_RESPONSE_MAGIC);
   await settleWithin(ready);
   return { df, sock };
+}
+
+// --- DwarfClient method-binding helpers ------------------------------------
+//
+// FakeSocket records raw writes; the checks below need the *method id* out of
+// each one, because that is the only way to see whether the client re-bound
+// (wire id 0 = BindMethod) or went straight to a cached id.
+
+const root = loadRoot();
+
+function encode(fqn, obj) {
+  const T = root.lookupType(fqn);
+  return Buffer.from(T.encode(T.create(obj)).finish());
+}
+
+/** One reply frame: the 8-byte header plus body, exactly as DFHack sends it. */
+function replyFrame(id, body) {
+  const buf = Buffer.allocUnsafe(8 + body.length);
+  buf.writeInt16LE(id, 0);
+  buf.writeUInt16LE(0, 2);
+  buf.writeInt32LE(body.length, 4);
+  body.copy(buf, 8);
+  return buf;
+}
+
+function bindReply(assignedId) {
+  return replyFrame(RPC_REPLY.RESULT, encode('dfproto.CoreBindReply', { assignedId }));
+}
+
+function stringReply(value) {
+  return replyFrame(RPC_REPLY.RESULT, encode('dfproto.StringMessage', { value }));
+}
+
+/**
+ * Method ids of the RPC messages written to a fake socket, in order, with the
+ * leading handshake write dropped.
+ */
+function writtenIds(sock) {
+  const start = sock.writes[0]?.equals(REQUEST_MAGIC) ? 1 : 0;
+  return sock.writes.slice(start).map((w) => w.readInt16LE(0));
+}
+
+async function connectedClient() {
+  const client = new DwarfClient();
+  const ready = client.connect();
+  const sock = sockets.at(-1);
+  sock.emit('connect');
+  sock.emit('data', COMPLETE_RESPONSE_MAGIC);
+  await settleWithin(ready);
+  return { client, sock };
+}
+
+async function reconnectClient(client) {
+  const reconnecting = client.connect();
+  const sock = sockets.at(-1);
+  sock.emit('connect');
+  sock.emit('data', COMPLETE_RESPONSE_MAGIC);
+  await settleWithin(reconnecting);
+  return sock;
+}
+
+/**
+ * Run one DwarfClient call to completion over a fake socket, answering each
+ * message the way DFHack would: wire id 0 (BindMethod) gets `assignedId`,
+ * anything else gets `reply`. Returns the observed promise state plus the wire
+ * ids written during this call — so a missing leading 0 is a skipped bind.
+ */
+async function runCall(sock, start, { assignedId, reply }) {
+  const first = writtenIds(sock).length;
+  let cursor = first;
+  const state = observe(start());
+  // Bind and call are separate round trips: write, answer, flush, write again.
+  for (let round = 0; round < 4; round++) {
+    await flushPromises();
+    const ids = writtenIds(sock);
+    if (cursor >= ids.length) break; // nothing new on the wire to answer
+    const id = ids[cursor++];
+    sock.emit('data', id === 0 ? bindReply(assignedId) : reply);
+  }
+  await settleWithin(state.promise);
+  return { state, ids: writtenIds(sock).slice(first) };
 }
 
 async function main() {
@@ -442,6 +524,152 @@ async function main() {
         'DwarfClient.connect() reports the same causal error',
         first.error instanceof Error && /closed/.test(first.error.message),
         first.error?.message ?? null
+      );
+    }
+
+    // Method ids are per-connection: DFHack's RemoteServer builds its RPC
+    // function table per connection, so an assignedId from a dead socket means
+    // nothing on the next one. After a socket death the client must re-bind.
+    {
+      const { client, sock } = await connectedClient();
+      const first = await runCall(sock, () => client.getVersion(), {
+        assignedId: 100,
+        reply: stringReply('50.11-r1'),
+      });
+      check(
+        'the first call binds before calling',
+        first.state.status === 'fulfilled' && first.ids[0] === 0 && first.ids[1] === 100,
+        { status: first.state.status, ids: first.ids, error: first.state.error?.message ?? null }
+      );
+
+      const repeat = await runCall(sock, () => client.getVersion(), {
+        assignedId: 100,
+        reply: stringReply('50.11-r1'),
+      });
+      check(
+        'a second call on the same connection reuses the bound id',
+        repeat.state.status === 'fulfilled' && repeat.ids.length === 1 && repeat.ids[0] === 100,
+        { status: repeat.state.status, ids: repeat.ids }
+      );
+
+      sock.emit('error', new Error('socket died'));
+      await flushPromises();
+      const fresh = await reconnectClient(client);
+      check('the reconnected client is connected', client.connected, client.connected);
+
+      const after = await runCall(fresh, () => client.getVersion(), {
+        assignedId: 200,
+        reply: stringReply('50.11-r1'),
+      });
+      check('a call after a socket death re-binds before calling', after.ids[0] === 0, after.ids);
+      check(
+        'no id from the dead connection reaches the new socket',
+        !after.ids.includes(100) && after.ids.includes(200),
+        after.ids
+      );
+      check(
+        'the re-bound call resolves on the new connection',
+        after.state.status === 'fulfilled',
+        after.state.error?.message ?? after.state.status
+      );
+    }
+
+    // Same invalidation on the explicit path: close() then connect().
+    {
+      const { client, sock } = await connectedClient();
+      const first = await runCall(sock, () => client.getVersion(), {
+        assignedId: 100,
+        reply: stringReply('50.11-r1'),
+      });
+      check(
+        'the pre-close call binds and resolves',
+        first.state.status === 'fulfilled' && first.ids[0] === 0,
+        { status: first.state.status, ids: first.ids }
+      );
+
+      client.close();
+      const fresh = await reconnectClient(client);
+      const after = await runCall(fresh, () => client.getVersion(), {
+        assignedId: 200,
+        reply: stringReply('50.11-r1'),
+      });
+      check(
+        'a call after close() + connect() re-binds before calling',
+        after.ids[0] === 0 && after.ids.includes(200) && !after.ids.includes(100),
+        after.ids
+      );
+      check(
+        'the re-bound call resolves after an explicit close()',
+        after.state.status === 'fulfilled',
+        after.state.error?.message ?? after.state.status
+      );
+    }
+
+    // A cached miss (`null` — "not available on this DFHack") is a cache state
+    // the invalidation has to cover too: the replacement connection can be a
+    // different build, or have different plugins loaded.
+    //
+    // The wire cannot produce one today — CoreBindReply.assigned_id is
+    // `required`, so a reply without it fails to decode, and DFHack answers an
+    // unknown method with a FAIL frame (which rejects and caches nothing). The
+    // entry is therefore seeded on the instance directly: what is under test is
+    // the cache's lifetime, not the route by which a miss gets stored.
+    {
+      const { client, sock } = await connectedClient();
+      client.boundIds.set('GetVersion', null);
+      client.boundGeneration = client.conn.generation;
+
+      const cachedMiss = await runCall(sock, () => client.getVersion(), {
+        assignedId: 42,
+        reply: stringReply('unreachable'),
+      });
+      check(
+        'a cached miss is honoured without re-probing the live connection',
+        cachedMiss.state.status === 'rejected' &&
+          /not available/.test(cachedMiss.state.error?.message ?? '') &&
+          cachedMiss.ids.length === 0,
+        {
+          status: cachedMiss.state.status,
+          message: cachedMiss.state.error?.message ?? null,
+          ids: cachedMiss.ids,
+        }
+      );
+
+      client.close();
+      const fresh = await reconnectClient(client);
+      const reprobed = await runCall(fresh, () => client.getVersion(), {
+        assignedId: 42,
+        reply: stringReply('50.11-r1'),
+      });
+      check(
+        'a cached miss is re-probed on a new connection',
+        reprobed.ids[0] === 0 && reprobed.ids.includes(42),
+        reprobed.ids
+      );
+      check(
+        'the re-probed method resolves once the new DFHack has it',
+        reprobed.state.status === 'fulfilled',
+        reprobed.state.error?.message ?? reprobed.state.status
+      );
+    }
+
+    // The signal the client keys its cache on.
+    {
+      const { df, sock } = await connectedPair();
+      const atConnect = df.generation;
+      sock.emit('error', new Error('socket died'));
+      await flushPromises();
+      const afterFail = df.generation;
+      await settleWithin(
+        df.connect().catch(() => {}),
+        10
+      );
+      df.close();
+      await flushPromises();
+      check(
+        'generation advances on socket death and on close()',
+        afterFail > atConnect && df.generation > afterFail,
+        { atConnect, afterFail, afterClose: df.generation }
       );
     }
   } catch (err) {

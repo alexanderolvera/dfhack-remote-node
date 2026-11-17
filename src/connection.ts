@@ -65,6 +65,7 @@ export class DfConnection {
   private queue: PendingCall[] = [];
   private active: PendingCall | null = null;
   private textFrames: Buffer[] = [];
+  private gen = 0;
 
   constructor({ host = DEFAULT_HOST, port = DEFAULT_PORT, textDecoder }: DfConnectionOptions = {}) {
     this.host = host;
@@ -77,6 +78,22 @@ export class DfConnection {
   /** True once connected and past the handshake. */
   get connected(): boolean {
     return this.shookHands;
+  }
+
+  /**
+   * Identifies the current connection attempt. Bumped by every teardown, so a
+   * consumer that cached per-connection server state against generation G can
+   * tell it is stale the moment `generation` moves past G.
+   *
+   * This exists because DFHack's RemoteServer keeps its RPC function table per
+   * connection: the method ids BindMethod hands out are only meaningful on the
+   * socket they were bound on. Both teardown paths bump it — the involuntary
+   * fail() and the explicit close() — and an over-count (repeated close(), a
+   * teardown with nothing to tear down) is harmless, since it only forces the
+   * consumer to rebuild state it would otherwise have reused.
+   */
+  get generation(): number {
+    return this.gen;
   }
 
   /** Connect and complete the handshake. Resolves once ready for calls. */
@@ -216,6 +233,7 @@ export class DfConnection {
   }
 
   private teardown(err: Error, destroy: boolean): void {
+    this.gen++;
     const sock = this.sock;
     const handshake = this.handshake;
     this.sock = null;
